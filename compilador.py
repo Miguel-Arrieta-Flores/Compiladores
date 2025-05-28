@@ -1,3 +1,5 @@
+import math
+
 class RiscVSimulator:
     """Simulador simplificado de RISC-V que soporta un subconjunto básico de instrucciones."""
     
@@ -97,8 +99,30 @@ class RiscVSimulator:
         
         elif opcode == 'div':
             rd, rs1, rs2 = self._parse_r_type(parts[1:])
-            self.registers[rd] = self.registers[rs1] / self.registers[rs2]
+            if(self.registers[rs1]==0):
+                print("Error, No se puede dividir el numero 0")
+            else:
+                self.registers[rd] = self.registers[rs1] / self.registers[rs2]
 
+        #Intrucciones trigonometricas
+        elif opcode == "sin":
+            # sin rd, rs1
+            rd= self._parse_register(parts[1])
+            rs1= self._parse_register(parts[2])
+            self.registers[rd] = math.sin(self.registers[rs1])
+
+        elif opcode == "cos":
+            # cos rd, rs1
+            rd= self._parse_register(parts[1])
+            rs1= self._parse_register(parts[2])
+            self.registers[rd] = math.cos(self.registers[rs1])
+
+        elif opcode == "tan":
+            # tan rd, rs1
+            rd= self._parse_register(parts[1])
+            rs1= self._parse_register(parts[2])
+            self.registers[rd] = math.tan(self.registers[rs1])
+            
         # Operaciones lógicas
         elif opcode == 'and':
             rd, rs1, rs2 = self._parse_r_type(parts[1:])
@@ -192,7 +216,7 @@ class RiscVSimulator:
             if self.registers[17] == 1:
                 print(f"Output: {self.registers[10]}")
             elif self.registers[17] == 2:
-                print(f"Output: {self.registers[32]}")
+                print(f"Output: {self.registers[42]}")
             elif self.registers[17] == 4:
                 # Mostrar los caracteres almacenados en memoria
                 addr = self.registers[10]
@@ -252,7 +276,7 @@ class RiscVSimulator:
         elif reg_str.startswith('x'):
             return int(reg_str[1:])
         elif reg_str.startswith('fa') and '0' <= reg_str[2] <= '7':
-            return 32 + int(reg_str[2])  # fa0-fa7: 32-39
+            return 42 + int(reg_str[2])  # fa0-fa7: 32-39
         elif reg_str.startswith('f') and reg_str[0:2]!="fa":
             return 32 + int(reg_str[1:])
         else:
@@ -320,9 +344,9 @@ class RiscVSimulator:
                 alias = "a0"
             elif i == 20:
                 alias = "a7"
-            elif i == 32:
+            elif i == 42:
                 alias = "fa0"
-            elif i == 39:
+            elif i == 49:
                 alias = "fa7"
             if(i<32):
                 if alias:
@@ -402,7 +426,7 @@ def esFloat(cad):
         return False
 
 def  es_pal_res(cad):
-    palres = ["var", "int", "real", "string", "char" , "float", 'print', 'println', 'read', 'tabla', 'main', 'void', 'if', 'else', 'in']
+    palres = ["var", "int", "real", "string", "char" , "float", 'print', 'println', 'read', 'tabla', 'main', 'void', 'if', 'else', 'in', 'end', 'sin', 'cos', 'tan']
     return (cad in palres)
 
 def  es_tipo(cad):
@@ -585,7 +609,7 @@ def correr_programa(tabla_var,tokens,simulator):
     program=""
     x=0
     f=0
-    for i in range(len(tokens)-1):
+    for i in range(len(tokens)):
         if es_id(tokens[i][0]):
             if es_pal_res(tokens[i][0]):
                 if es_tipo(tokens[i][1]):
@@ -673,11 +697,28 @@ def correr_programa(tabla_var,tokens,simulator):
                         program+="li a0, 10\n"
                         program+="li a7, 11\n"
                         program+="ecall\n"
-                    
+
+                elif(tokens[i][0]=='end'):
+                    program+="li a7, 10\n"
+                    program+="ecall\n"
+
+                elif(tokens[i][0] in ['sin','cos','tan']):
+                    if(tokens[i][0]=='sin'):
+                        program+="sin fa0, "+str(getValor(tabla_var,tokens[i][2])+"\n")
+                        program+=("li a7, 2\n")  # Cargar valor de {tokens[i][2]}
+                        program+=("ecall\n") # Ejecutar syscall
+                    elif(tokens[i][0]=='cos'):
+                        program+="cos fa0, "+str(getValor(tabla_var,tokens[i][2])+"\n")
+                        program+=("li a7, 2\n")  # Cargar valor de {tokens[i][2]}
+                        program+=("ecall\n") # Ejecutar syscall
+                    elif(tokens[i][0]=='tan'):
+                        program+="tan fa0, "+str(getValor(tabla_var,tokens[i][2])+"\n")
+                        program+=("li a7, 2\n")  # Cargar valor de {tokens[i][2]}
+                        program+=("ecall\n") # Ejecutar syscall
             
             elif (len(tokens[i])==4): # Es de la forma "ID = valor;"
                 if (tokens[i][1]=="="): #Se verifica si tiene el caracter "="
-                    set_var(tabla_var, tokens[i][0], tokens[i][2]) #Se asigna el nuevo valor
+                    program+=f"li {getValor(tabla_var,tokens[i][0])}, {tokens[i][2]}\n"
             elif(len(tokens[i])>=5):
                 if (tokens[i][1]=="="): #Se verifica si tiene el caracter "="
                     valores=[]
@@ -710,6 +751,12 @@ def correr_programa(tabla_var,tokens,simulator):
                                 program+="mul "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
                             elif(valores[j][3]=='/'):
                                 program+="div "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                    if(tokens[i][3] in ['sin','cos','tan']):
+                        registro=str(getValor(tabla_var, tokens[i][0]))
+                        if(tokens[i][3]=='sin'):
+                            program+="sin "+str(registro)+", "+str(getValor(tabla_var,tokens[i][5]))
+                           
+    
     codigo_final = ".data\n"
     for linea in seccion_data:
         codigo_final += linea + "\n"
@@ -730,7 +777,9 @@ def compilarC(program_code):
 # Función principal
 if __name__ == "__main__":
     # Este es solo un ejemplo - los programas reales se cargarán desde archivos o entrada del usuario
-    texto = """
+    rad=(math.pi/4)
+    texto = f"""
+var float rad;
 print("Hola Mundo");
 var float x1;
 var float x2; /* coordenadas del 1er punto */
@@ -738,7 +787,7 @@ var float y1;
 var float y2; /* coordenadas del 2do punto */
 var float m; /* pendiente de la recta */
 tabla;
-print("Escriba el valor de x1: ");
+println("Escriba el valor de x1: ");
 read(x1);
 print("Escriba el valor de x2: ");
 read(x2);
@@ -747,10 +796,16 @@ read(y1);
 print("Escriba el valor de y2: ");
 read(y2);
 tabla;
+print(x1);
 m = (y2 - y1) / (x2 - x1);
 tabla;
 println("La pendiente es: ", m);
 println(m);
+print(x1);
+rad={rad};
+sin(rad);
+cos(rad);
+tan(rad);
 end;
 """
     compilarC(texto)
