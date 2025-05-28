@@ -3,21 +3,38 @@ class RiscVSimulator:
     
     def __init__(self):
         # Registros: x0-x31 (x0 siempre es 0)
-        self.registers = [0] * 32
+        self.registers = [0] * 64
         # Memoria (simulada como un diccionario para acceso eficiente)
         self.memory = {}
+        self.data_labels={}
         # Contador de programa
         self.pc = 0
         # Diccionario de instrucciones
         self.instructions = {}
         # Flag para controlar ejecución
         self.running = False
+
+    def load_data_label(self, label, string, base_address=0x10010000):
+        """Agrega una etiqueta con .asciiz a la memoria simulada"""
+        address = base_address + len(self.data_labels) * 0x20  # espacio reservado por etiqueta
+        self.data_labels[label] = address
+        for i, char in enumerate(string):
+            if char == '\n':
+                self.memory[address + i] = 0x0A
+            else:
+                self.memory[address + i] = ord(char) # guardar cada carácter como byte
+        self.memory[address + len(string)] = 0  # Null terminator (\0)
     
+    def execute_la(self, rd, label):
+        """Simula la instrucción 'la rd, label'"""
+        if label not in self.data_labels:
+            raise ValueError(f"Etiqueta no encontrada: {label}")
+        self.registers[rd] = self.data_labels[label]
+
     def load_program(self, program):
         """Carga un programa en la memoria del simulador."""
         # Limpiamos el estado previo
-        self.registers = [0] * 32
-        self.memory = {}
+        self.registers = [0] * 64
         self.pc = 0
         self.instructions = {}
         
@@ -51,7 +68,6 @@ class RiscVSimulator:
         while self.running and self.pc in self.instructions:
             instruction = self.instructions[self.pc]
             self.execute_instruction(instruction)
-            
         return self.registers[10]  # Devuelve el valor en x10 (a0) como resultado
     
     def execute_instruction(self, instruction):
@@ -79,6 +95,10 @@ class RiscVSimulator:
             rd, rs1, rs2 = self._parse_r_type(parts[1:])
             self.registers[rd] = self.registers[rs1] * self.registers[rs2]
         
+        elif opcode == 'div':
+            rd, rs1, rs2 = self._parse_r_type(parts[1:])
+            self.registers[rd] = self.registers[rs1] / self.registers[rs2]
+
         # Operaciones lógicas
         elif opcode == 'and':
             rd, rs1, rs2 = self._parse_r_type(parts[1:])
@@ -154,18 +174,53 @@ class RiscVSimulator:
             rd = self._parse_register(parts[1])
             rs = self._parse_register(parts[2])
             self.registers[rd] = self.registers[rs]
+
+        elif opcode == "la":
+            # Sintaxis esperada: la xN, label
+            rd = self._parse_register(parts[1])
+            label = parts[2]
+
+            if label not in self.data_labels:
+                raise Exception(f"Label '{label}' no definido en la sección .data")
+
+            address = self.data_labels[label]
+            self.registers[rd] = address
         
         # Syscalls simplificados
         elif opcode == 'ecall':
             # Si a7 (x17) = 1, imprime el entero en a0 (x10)
             if self.registers[17] == 1:
                 print(f"Output: {self.registers[10]}")
+            elif self.registers[17] == 2:
+                print(f"Output: {self.registers[32]}")
+            elif self.registers[17] == 4:
+                # Mostrar los caracteres almacenados en memoria
+                addr = self.registers[10]
+                mensaje = []
+                while self.memory[addr] != 0:
+                    mensaje.append(chr(self.memory[addr]))
+                    addr += 1
+                print(''.join(mensaje))
             # Si a7 (x17) = 10, termina el programa
             elif self.registers[17] == 10:
                 self.running = False
-        
+
+            elif self.registers[17]==11:
+                if(self.registers[10]==10):
+                    addr = self.data_labels["salto"]
+                    mensaje = []
+                    while self.memory[addr] != 0:
+                        mensaje.append(chr(self.memory[addr]))
+                        addr += 1
+                    print(''.join(mensaje))
+                else:
+                    print(self.registers[10])
+
         else:
-            print(f"Instrucción no soportada: {instruction}")
+            if(opcode.startswith(".") or es_id(opcode)):
+                print("")
+            else:
+                print(f"Instrucción no soportada: {instruction}")
         
         # Aseguramos que x0 siempre sea 0
         self.registers[0] = 0
@@ -196,8 +251,10 @@ class RiscVSimulator:
             return 10 + int(reg_str[1])  # a0-a7: 10-17
         elif reg_str.startswith('x'):
             return int(reg_str[1:])
-        elif reg_str.startswith('f'):
-            return int(reg_str[1:])
+        elif reg_str.startswith('fa') and '0' <= reg_str[2] <= '7':
+            return 32 + int(reg_str[2])  # fa0-fa7: 32-39
+        elif reg_str.startswith('f') and reg_str[0:2]!="fa":
+            return 32 + int(reg_str[1:])
         else:
             raise ValueError(f"Registro no reconocido: {reg_str}")
     
@@ -251,7 +308,7 @@ class RiscVSimulator:
     def print_state(self):
         """Imprime el estado actual de los registros."""
         print("Estado de registros:")
-        for i in range(32):
+        for i in range(64):
             alias = ""
             if i == 0:
                 alias = "zero"
@@ -261,14 +318,22 @@ class RiscVSimulator:
                 alias = "sp"
             elif i == 10:
                 alias = "a0"
-            elif i == 17:
+            elif i == 20:
                 alias = "a7"
-            
-            if alias:
-                print(f"x{i} ({alias}): {self.registers[i]}")
-            else:
-                print(f"x{i}: {self.registers[i]}")
-
+            elif i == 32:
+                alias = "fa0"
+            elif i == 39:
+                alias = "fa7"
+            if(i<32):
+                if alias:
+                    print(f"x{i} ({alias}): {self.registers[i]}")
+                else:
+                    print(f"x{i}: {self.registers[i]}")
+            if(i>=32):
+                if alias:
+                    print(f"f{i-32} ({alias}): {self.registers[i]}")
+                else:
+                    print(f"f{i-32}: {self.registers[i]}")
 # Compilador C
 
 class Variable:
@@ -343,6 +408,87 @@ def  es_pal_res(cad):
 def  es_tipo(cad):
     tipos = ["int", "real", "string", "char", "float"]
     return (cad in tipos)
+
+def tipoResultado(op1_tipo, operador, op2_tipo):
+    '''
+    Devuelve el tipo del resultado según el tipo de los operandos y el operador.
+    Tipos válidos: 'int', 'float'
+    Operadores válidos: '+', '-', '*', '/'
+    '''
+    if op1_tipo == 'int' and op2_tipo == 'int':
+        if operador == '/':
+            return 'float'
+        else:
+            return 'int'
+    else:
+        # Cualquier combinación donde al menos uno sea float da float
+        return 'float'
+
+def obtenerPrioridadOperador(e):
+    prioridades = {
+            '+': 1,
+            '-': 1,
+            '*': 2,
+            '/': 2,
+            '^': 3
+        }
+    return prioridades.get(e, 0)
+
+
+def convertirInfijaAPostfija(infija):
+	'''Convierte una expresión infija a una posfija, devolviendo una lista.'''
+	pila = []
+	salida = []
+	for e in infija:
+		if e == '(':
+			pila.append(e)
+		elif e == ')':
+			while pila[len(pila) - 1 ] != '(':
+				salida.append(pila.pop())
+			pila.pop()
+		elif e in ['+', '-', '*', '/', '^']:
+			while (len(pila) != 0) and obtenerPrioridadOperador(e) <= obtenerPrioridadOperador(pila[len(pila) - 1]):
+				salida.append(pila.pop())
+			pila.append(e)
+		else:
+			salida.append(e)
+	while len(pila) != 0:
+		salida.append(pila.pop())
+	return salida
+
+def analizarPostfija(postfija):
+    '''Recibe una lista en notación postfija y devuelve una lista con los pasos de operaciones.'''
+    pila = []
+    pasos = []
+    temp_var = 1  # Para nombrar resultados temporales si quieres
+
+    for token in postfija:
+        t=[]
+        if token not in ['+', '-', '*', '/', '^']:
+            pila.append(token)
+        else:
+            # Se sacan los dos últimos operandos
+            op2 = pila.pop()
+            op1 = pila.pop()
+            resultado = f"t{temp_var}"
+            t=[resultado,"=",op1,token,op2]
+            pasos.append(t)
+            pila.append(resultado)
+            temp_var += 1
+
+    return pasos
+
+def get_operand(tabla_var, expr, reg_prefix):
+    expr = expr.strip().strip(';')  # Elimina espacios y ;
+    if existe_var(tabla_var, expr):
+        return getValor(tabla_var, expr)
+    elif esFloat(expr):
+        return expr
+    elif esEntero(expr):
+        return expr
+    else:
+        raise ValueError(f"Operando no reconocido o no soportado: {expr}")
+
 
 def quitar_comentarios(program):
     estado = 'Z'
@@ -435,6 +581,7 @@ def separa_tokens(program):
 
 
 def correr_programa(tabla_var,tokens,simulator):
+    seccion_data={}
     program=""
     x=0
     f=0
@@ -468,23 +615,106 @@ def correr_programa(tabla_var,tokens,simulator):
                             leido+='.0'
                             float(leido)
                         program+="li "+getValor(tabla_var,tokens[i][2])+", "+leido+"\n"    
+
                 elif tokens[i][0] == 'tabla':               
                     imprime_tabla_var(tabla_var)
-                elif (tokens[i][0]=="print" or tokens[i][0]=="println"):# El renglon es un print
-                    if (tokens[i][3]==")"): #Hay un solo token dentro del print
-                        if(existe_var(tabla_var,tokens[i][2])):
-                            valor = getValor(tabla_var, tokens[i][2]); #recuperamos el valor de la variable
-                            print(valor)
-                            if(tokens[i][0]=="println"):
-                                print('\n')
-                        else:
-                            print(tokens[i][2])
-                            if(tokens[i][0]=="println"):
-                                print('\n')
+                    
+                # Manejo de print y println
+                elif tokens[i][0] in ['print', 'println']:
+                    if len(tokens[i]) < 3 or tokens[i][1] != '(' or tokens[i][-2] != ')':
+                        print("Error de sintaxis en print/println")
+
+                    if (tokens[i][3]==")" and existe_var(tabla_var,tokens[i][2])==False): #Hay un solo token dentro del print
+                        
+                        # Cadena literal
+                        cadena = tokens[i][2]
+                        label = f"str_{len(seccion_data)}"
+                        seccion_data[label]=cadena
+                        simulator.load_data_label(label, cadena)
+                        simulator.execute_la(10, label)
+                        program+=(f"la a0, {label}\n")# Cargar dirección de la cadena
+                        program+=("li a7, 4\n") # Syscall para Write('texto')"
+                        program+=("ecall\n") # Ejecutar syscall
+
+                    
+                    elif tokens[i][3]==")" and existe_var(tabla_var,tokens[i][2])==True:
+                        # Variable
+                        tipo = getTipo(tabla_var, tokens[i][2])
+                        registro = getValor(tabla_var, tokens[i][2])
+                        
+                        if not tipo or not registro:
+                            print(f"Error: variable '{tokens[i][2]}' no encontrada")
+                            continue
+                        
+                        if tipo == "int":
+                            program+=(f"mv a0, {registro}\n") # Cargar valor de {tokens[i][2]}"
+                            program+=("li a7, 1\n") # Syscall para Write(integer)
+                            program+=("ecall\n") # Ejecutar syscall
+                        
+                        elif tipo == "float":
+                            program+=(f"mv fa0, {registro}\n")  # Cargar valor de {tokens[i][2]}
+                            program+=("li a7, 2\n")  # Cargar valor de {tokens[i][2]}
+                            program+=("ecall\n") # Ejecutar syscall
+                        
+                        elif tipo == "char":
+                            program+=(f"mv a0, {registro}\n")# Cargar valor de {tokens[i][2]}
+                            program+=("li a7, 11\n") # Syscall para Write(carácter)
+                            program+=("ecall\n") # Ejecutar syscall
+                        
+                        elif tipo == "string":
+                            program+=(f"la a0, buffer_{tokens[i][2]}\n") # Cargar dirección de {tokens[i][2]}
+                            program+=("li a7, 4\n") # Syscall para Write('texto')
+                            program+=("ecall\n") # Syscall para Write('texto')
+
+                    if(tokens[i][0] == 'println'):
+                        seccion_data["salto"]="\n"
+                        simulator.load_data_label("salto","\n")
+                        simulator.execute_la(10,'salto')
+                        program+="li a0, 10\n"
+                        program+="li a7, 11\n"
+                        program+="ecall\n"
+                    
+            
             elif (len(tokens[i])==4): # Es de la forma "ID = valor;"
                 if (tokens[i][1]=="="): #Se verifica si tiene el caracter "="
                     set_var(tabla_var, tokens[i][0], tokens[i][2]) #Se asigna el nuevo valor
-    simulator.load_program(program)
+            elif(len(tokens[i])>=5):
+                if (tokens[i][1]=="="): #Se verifica si tiene el caracter "="
+                    valores=[]
+                    e1=tokens[i][2:-1]
+                    valores=analizarPostfija(convertirInfijaAPostfija(e1))
+                    for j in range(len(valores)):
+                        if (j<len(valores)-1):
+                            agrega_var(tabla_var, valores[j][0], tipoResultado(valores[j][2],valores[j][3],valores[j][4])) #Se asigna el nuevo valor
+                        if(tipoResultado(valores[j][2],valores[j][3],valores[j][4])=="float"):
+                            program+="li f"+str(f)+", 0.0\n"
+                            set_var(tabla_var, valores[j][0] ,"f"+str(f))
+                            f+=1
+                        else:
+                            program+="li x"+str(x)+", 0\n"
+                            set_var(tabla_var,valores[j][0] ,"x"+str(x))
+                            x+=1
+                        if(valores[j][3] in '+-*/'):
+                            registro=""
+                            if (tipoResultado(valores[j][2],valores[j][3],valores[j][4])=="float"):
+                                registro="f"+str(f-1)
+                            else:
+                                registro="x"+str(x-1)
+                            if(j==len(valores)-1):
+                                registro=str(getValor(tabla_var, tokens[i][0]))
+                            if(valores[j][3]=='-'):
+                                program+="sub "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                            elif(valores[j][3]=='+'):
+                                program+="add "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                            elif(valores[j][3]=='*'):
+                                program+="mul "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                            elif(valores[j][3]=='/'):
+                                program+="div "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+    codigo_final = ".data\n"
+    for linea in seccion_data:
+        codigo_final += linea + "\n"
+    codigo_final += "\n.text\n" + program
+    simulator.load_program(codigo_final)
     simulator.run()
 
 # Función para ejecutar un programa
@@ -501,6 +731,7 @@ def compilarC(program_code):
 if __name__ == "__main__":
     # Este es solo un ejemplo - los programas reales se cargarán desde archivos o entrada del usuario
     texto = """
+print("Hola Mundo");
 var float x1;
 var float x2; /* coordenadas del 1er punto */
 var float y1;
@@ -517,7 +748,9 @@ print("Escriba el valor de y2: ");
 read(y2);
 tabla;
 m = (y2 - y1) / (x2 - x1);
+tabla;
 println("La pendiente es: ", m);
+println(m);
 end;
 """
     compilarC(texto)
