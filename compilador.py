@@ -70,6 +70,7 @@ class RiscVSimulator:
         while self.running and self.pc in self.instructions:
             instruction = self.instructions[self.pc]
             self.execute_instruction(instruction)
+        self.print_state()
         return self.registers[10]  # Devuelve el valor en x10 (a0) como resultado
     
     def execute_instruction(self, instruction):
@@ -96,6 +97,10 @@ class RiscVSimulator:
         elif opcode == 'mul':
             rd, rs1, rs2 = self._parse_r_type(parts[1:])
             self.registers[rd] = self.registers[rs1] * self.registers[rs2]
+
+        elif opcode == 'muli':
+            rd, rs1, imm = self._parse_i_type(parts[1:])
+            self.registers[rd] = self.registers[rs1] * imm
         
         elif opcode == 'div':
             rd, rs1, rs2 = self._parse_r_type(parts[1:])
@@ -217,6 +222,7 @@ class RiscVSimulator:
                 print(f"Output: {self.registers[10]}")
             elif self.registers[17] == 2:
                 print(f"Output: {self.registers[42]}")
+            
             elif self.registers[17] == 4:
                 # Mostrar los caracteres almacenados en memoria
                 addr = self.registers[10]
@@ -225,6 +231,34 @@ class RiscVSimulator:
                     mensaje.append(chr(self.memory[addr]))
                     addr += 1
                 print(''.join(mensaje))
+            
+            elif self.registers[17] == 5:
+                try:
+                    val = int(input())
+                    self.registers[10] = val 
+                except ValueError:
+                    print("Error: Entrada inválida para entero.")
+                    self.registers[10] = 0 
+            
+            elif self.registers[17] == 6:
+                try:
+                    val = float(input())
+                    self.registers[42] = val 
+                except ValueError:
+                    print("Error: Entrada inválida para flotante.")
+                    self.registers[42] = 0.0 
+
+            elif self.registers[17] == 8:
+                addr = self.registers[10]
+                max_len = self.registers[11] 
+                input_str = input()
+                for i, char_code in enumerate(input_str):
+                    if i < max_len - 1: 
+                        self.memory[addr + i] = ord(char_code)
+                    else:
+                        break
+                self.memory[addr + min(len(input_str), max_len - 1)] = 0 
+
             # Si a7 (x17) = 10, termina el programa
             elif self.registers[17] == 10:
                 self.running = False
@@ -239,6 +273,13 @@ class RiscVSimulator:
                     print(''.join(mensaje))
                 else:
                     print(self.registers[10])
+
+            elif self.registers[17] == 12:
+                char_input = input()
+                if char_input:
+                    self.registers[10] = ord(char_input[0]) 
+                else:
+                    self.registers[10] = 0
 
         else:
             if(opcode.startswith(".") or es_id(opcode)):
@@ -426,7 +467,7 @@ def esFloat(cad):
         return False
 
 def  es_pal_res(cad):
-    palres = ["var", "int", "real", "string", "char" , "float", 'print', 'println', 'read', 'tabla', 'main', 'void', 'if', 'else', 'in', 'end', 'sin', 'cos', 'tan']
+    palres = ["var", "int", "real", "string", "char" , "float", 'print', 'println', 'read', 'tabla', 'main', 'void', 'if', 'else', 'in', 'end', 'for', 'sin', 'cos', 'tan']
     return (cad in palres)
 
 def  es_tipo(cad):
@@ -502,6 +543,59 @@ def analizarPostfija(postfija):
 
     return pasos
 
+def procesar_for(tokens_for, cuerpo, tabla_var, f, x):
+    tokens_for = [t for t in tokens_for if t not in ['(', ')', ';']]
+    program = ""
+
+    var_control = tokens_for[1]
+    valor_inicial = tokens_for[3]
+    condicion = tokens_for[4:7]  # ['i', '<', '5']
+    incremento = tokens_for[7:]  # Esto no se usa directamente aún
+
+    # === Inicialización ===
+    if not existe_var(tabla_var, var_control):
+        reg_control = f"x{x}"
+        program += f"li {reg_control}, {valor_inicial}\n"
+        agrega_var(tabla_var, var_control, "int")
+        set_var(tabla_var, var_control, reg_control)
+        x += 1
+    else:
+        reg_control = getValor(tabla_var, var_control)
+        program += f"li {reg_control}, {valor_inicial}\n"
+
+    # === Límite (condición) ===
+    op_derecho = condicion[2]
+    if op_derecho == var_control:
+        raise ValueError("La condición del for no puede ser contra sí misma")
+
+    if existe_var(tabla_var, op_derecho):
+        reg_limite = getValor(tabla_var, op_derecho)
+    elif esEntero(op_derecho) or esFloat(op_derecho):
+        reg_limite = f"x{x}"
+        program += f"li {reg_limite}, {op_derecho}\n"
+        x += 1
+    else:
+        raise ValueError(f"Operando no válido en condición del for: {op_derecho}")
+
+    # === Etiquetas únicas ===
+    unique_id = f
+    inicio = f"for_start_{var_control}_{unique_id}"
+    cuerpo_label = f"for_body_{var_control}_{unique_id}"
+    fin = f"for_end_{var_control}_{unique_id}"
+
+    # === Código del for ===
+    program += f"{inicio}:\n"
+    program += f"blt {reg_control}, {reg_limite}, {cuerpo_label}\n"
+    program += f"j {fin}\n"
+    program += f"{cuerpo_label}:\n"
+    program += cuerpo
+    program += f"addi {reg_control}, {reg_control}, 1\n"
+    program += f"j {inicio}\n"
+    program += f"{fin}:\n"
+
+    return program, x, f
+
+
 def get_operand(tabla_var, expr, reg_prefix):
     expr = expr.strip().strip(';')  # Elimina espacios y ;
     if existe_var(tabla_var, expr):
@@ -545,7 +639,7 @@ def separa_tokens(program):
         line=line.strip()
         if len(program) < 3:
             return []
-        elif line[-1] != ';':
+        elif line[-1] != ';' and not (line.startswith("for") or line.startswith("endfor")):
             print('Error, la siguiente linea no tiene ";": '+line)
             break
         else:    
@@ -575,7 +669,8 @@ def separa_tokens(program):
                     compuesto = True
                 else:
                     tokens2.append(tokens[c])
-            tokens2.append(tokens[-1])    
+            if tokens:
+                tokens2.append(tokens[-1])   
             for c in range(1,len(tokens2)-1):
                 if tokens2[c]=="." and esEntero(tokens2[c-1]) and esEntero(tokens2[c+1]):
                     tokens2[c]=tokens2[c-1]+tokens2[c]+tokens2[c+1]
@@ -607,9 +702,12 @@ def separa_tokens(program):
 def correr_programa(tabla_var,tokens,simulator):
     seccion_data={}
     program=""
-    x=0
+    x=1
     f=0
-    for i in range(len(tokens)):
+    i=0
+    while i <= len(tokens)-1:
+        print(tokens[i])
+        print(i)
         if es_id(tokens[i][0]):
             if es_pal_res(tokens[i][0]):
                 if es_tipo(tokens[i][1]):
@@ -634,11 +732,35 @@ def correr_programa(tabla_var,tokens,simulator):
                             x+=1
                 elif tokens[i][0] == 'read':
                     if tokens[i][1] == '(' and es_id(tokens[i][2]) and tokens[i][3] == ')':
-                        leido = input()
-                        if getTipo(tabla_var,tokens[i][2])=="float" and leido.isdigit():
-                            leido+='.0'
-                            float(leido)
-                        program+="li "+getValor(tabla_var,tokens[i][2])+", "+leido+"\n"    
+                        var_name = tokens[i][2]
+                        var_type = getTipo(tabla_var, var_name)
+                        var_reg = getValor(tabla_var, var_name)
+
+                        if not var_type or not var_reg:
+                            print(f"Error: variable '{var_name}' no encontrada para lectura.")
+                            continue
+
+                        if var_type == 'int':
+                            program += "li a7, 5\n" 
+                            program += "ecall\n"
+                            program += f"mv {var_reg}, a0\n" 
+                        elif var_type == 'float':
+                            program += "li a7, 6\n" 
+                            program += "ecall\n"
+                            program += f"mv {var_reg}, fa0\n" 
+                        elif var_type == 'char':
+                            program += "li a7, 12\n" 
+                            program += "ecall\n"
+                            program += f"mv {var_reg}, a0\n"
+                        elif var_type == 'string':
+                            buffer_label = var_reg 
+                            max_string_len = 256
+                            program += f"la a0, {buffer_label}\n" 
+                            program += f"li a1, {max_string_len}\n"
+                            program += "li a7, 8\n" 
+                            program += "ecall\n"
+                        else:
+                            print(f"Error: Tipo de variable '{var_type}' no soportado para lectura.")   
 
                 elif tokens[i][0] == 'tabla':               
                     imprime_tabla_var(tabla_var)
@@ -647,48 +769,56 @@ def correr_programa(tabla_var,tokens,simulator):
                 elif tokens[i][0] in ['print', 'println']:
                     if len(tokens[i]) < 3 or tokens[i][1] != '(' or tokens[i][-2] != ')':
                         print("Error de sintaxis en print/println")
+                    contenido=[]
+                    for c in range(2,len(tokens[i])-1):
+                        if(tokens[i][c]!=',' and tokens[i][c]!=')'):
+                            contenido.append(tokens[i][c])
+                        c+=1
+                    print(contenido)
+                    for j in range(len(contenido)):
+                        imprimir=contenido[j]
+                        if (tokens[i][-2]==")" and existe_var(tabla_var,imprimir)==False): #Hay un solo token dentro del print
+                            
+                            # Cadena literal
+                            cadena = imprimir
+                            label = f"str_{len(seccion_data)}"
+                            seccion_data[label]=cadena
+                            simulator.load_data_label(label, cadena)
+                            simulator.execute_la(10, label)
+                            program+=(f"la a0, {label}\n")# Cargar dirección de la cadena
+                            program+=("li a7, 4\n") # Syscall para Write('texto')"
+                            program+=("ecall\n") # Ejecutar syscall
 
-                    if (tokens[i][3]==")" and existe_var(tabla_var,tokens[i][2])==False): #Hay un solo token dentro del print
                         
-                        # Cadena literal
-                        cadena = tokens[i][2]
-                        label = f"str_{len(seccion_data)}"
-                        seccion_data[label]=cadena
-                        simulator.load_data_label(label, cadena)
-                        simulator.execute_la(10, label)
-                        program+=(f"la a0, {label}\n")# Cargar dirección de la cadena
-                        program+=("li a7, 4\n") # Syscall para Write('texto')"
-                        program+=("ecall\n") # Ejecutar syscall
-
-                    
-                    elif tokens[i][3]==")" and existe_var(tabla_var,tokens[i][2])==True:
-                        # Variable
-                        tipo = getTipo(tabla_var, tokens[i][2])
-                        registro = getValor(tabla_var, tokens[i][2])
-                        
-                        if not tipo or not registro:
-                            print(f"Error: variable '{tokens[i][2]}' no encontrada")
-                            continue
-                        
-                        if tipo == "int":
-                            program+=(f"mv a0, {registro}\n") # Cargar valor de {tokens[i][2]}"
-                            program+=("li a7, 1\n") # Syscall para Write(integer)
-                            program+=("ecall\n") # Ejecutar syscall
-                        
-                        elif tipo == "float":
-                            program+=(f"mv fa0, {registro}\n")  # Cargar valor de {tokens[i][2]}
-                            program+=("li a7, 2\n")  # Cargar valor de {tokens[i][2]}
-                            program+=("ecall\n") # Ejecutar syscall
-                        
-                        elif tipo == "char":
-                            program+=(f"mv a0, {registro}\n")# Cargar valor de {tokens[i][2]}
-                            program+=("li a7, 11\n") # Syscall para Write(carácter)
-                            program+=("ecall\n") # Ejecutar syscall
-                        
-                        elif tipo == "string":
-                            program+=(f"la a0, buffer_{tokens[i][2]}\n") # Cargar dirección de {tokens[i][2]}
-                            program+=("li a7, 4\n") # Syscall para Write('texto')
-                            program+=("ecall\n") # Syscall para Write('texto')
+                        elif tokens[i][-2]==")" and existe_var(tabla_var,imprimir)==True:
+                            # Variable
+                            tipo = getTipo(tabla_var, imprimir)
+                            registro = getValor(tabla_var, imprimir)
+                            
+                            if not tipo or not registro:
+                                print(f"Error: variable '{imprimir}' no encontrada")
+                                continue
+                            
+                            if tipo == "int":
+                                program+=(f"mv a0, {registro}\n") # Cargar valor de {tokens[i][2]}"
+                                program+=("li a7, 1\n") # Syscall para Write(integer)
+                                program+=("ecall\n") # Ejecutar syscall
+                            
+                            elif tipo == "float":
+                                program+=(f"mv fa0, {registro}\n")  # Cargar valor de {tokens[i][2]}
+                                program+=("li a7, 2\n")  # Cargar valor de {tokens[i][2]}
+                                program+=("ecall\n") # Ejecutar syscall
+                            
+                            elif tipo == "char":
+                                program+=(f"mv a0, {registro}\n")# Cargar valor de {tokens[i][2]}
+                                program+=("li a7, 11\n") # Syscall para Write(carácter)
+                                program+=("ecall\n") # Ejecutar syscall
+                            
+                            elif tipo == "string":
+                                program+=(f"la a0, buffer_{imprimir}\n") # Cargar dirección de {tokens[i][2]}
+                                program+=("li a7, 4\n") # Syscall para Write('texto')
+                                program+=("ecall\n") # Syscall para Write('texto')
+                        j+=1
 
                     if(tokens[i][0] == 'println'):
                         seccion_data["salto"]="\n"
@@ -697,6 +827,59 @@ def correr_programa(tabla_var,tokens,simulator):
                         program+="li a0, 10\n"
                         program+="li a7, 11\n"
                         program+="ecall\n"
+
+                elif tokens[i][0] == 'for':                    
+                    linea = tokens[i]  # Línea donde inicia el for
+                    cuerpo_for = ""    # Código que irá dentro del for
+                    i += 1  # Avanza a la siguiente línea después del 'for'
+
+                    # Recorrer todas las líneas hasta encontrar 'endfor'
+                    while i < len(tokens) and tokens[i][0] != 'endfor':
+                        print("CUERPO FOR:", tokens[i])  # Debug
+
+                        # Detectar multiplicación del tipo: ID = ID * valor
+                        if len(tokens[i]) >= 5 and tokens[i][3] == '*':
+                            reg1 = getValor(tabla_var, tokens[i][2])
+                            reg2 = get_operand(tabla_var, tokens[i][4], "x")
+
+                            if esEntero(tokens[i][4]):
+                                temp = f"x{x}"
+                                cuerpo_for += f"li {temp}, {tokens[i][4]}\n"
+                                x += 1
+                                reg2 = temp
+
+                            reg = getValor(tabla_var, tokens[i][0])
+                            cuerpo_for += f"mul {reg}, {reg1}, {reg2}\n"
+
+                        # Print de variables o cadenas
+                        elif tokens[i][0] == 'print' and len(tokens[i]) >= 3:
+                            var = tokens[i][2]
+                            if existe_var(tabla_var, var):
+                                tipo = getTipo(tabla_var, var)
+                                registro = getValor(tabla_var, var)
+                                if tipo == "int":
+                                    cuerpo_for += f"mv a0, {registro}\nli a7, 1\necall\n"
+                                elif tipo == "float":
+                                    cuerpo_for += f"mv fa0, {registro}\nli a7, 2\necall\n"
+                                elif tipo == "char":
+                                    cuerpo_for += f"mv a0, {registro}\nli a7, 11\necall\n"
+                                elif tipo == "string":
+                                    cuerpo_for += f"la a0, {registro}\nli a7, 4\necall\n"
+                            else:
+                                # Literal como cadena
+                                msg = tokens[i][2]
+                                label = f"msg_{i}"
+                                simulator.load_data_label(label, msg)
+                                cuerpo_for += f"la a0, {label}\nli a7, 4\necall\n"
+
+                        i += 1  # Avanza a la siguiente instrucción dentro del for
+
+                    # Al salir del while, estamos en 'endfor'
+                    ensamblador_for, x, f = procesar_for(linea, cuerpo_for, tabla_var, f, x)
+                    program += ensamblador_for
+                    i += 1  # Saltamos el 'endfor' para continuar
+
+                    continue
 
                 elif(tokens[i][0]=='end'):
                     program+="li a7, 10\n"
@@ -748,14 +931,17 @@ def correr_programa(tabla_var,tokens,simulator):
                             elif(valores[j][3]=='+'):
                                 program+="add "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
                             elif(valores[j][3]=='*'):
-                                program+="mul "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                                if(getValor(tabla_var,valores[j][4])!=None):
+                                    program+="mul "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                                else:
+                                    program+="muli "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+valores[j][4]+"\n"
                             elif(valores[j][3]=='/'):
                                 program+="div "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
                     if(tokens[i][3] in ['sin','cos','tan']):
                         registro=str(getValor(tabla_var, tokens[i][0]))
                         if(tokens[i][3]=='sin'):
                             program+="sin "+str(registro)+", "+str(getValor(tabla_var,tokens[i][5]))
-                           
+        i += 1                  
     
     codigo_final = ".data\n"
     for linea in seccion_data:
@@ -778,7 +964,7 @@ def compilarC(program_code):
 if __name__ == "__main__":
     # Este es solo un ejemplo - los programas reales se cargarán desde archivos o entrada del usuario
     rad=(math.pi/4)
-    texto = f"""
+    texto = """
 var float rad;
 print("Hola Mundo");
 var float x1;
@@ -787,7 +973,7 @@ var float y1;
 var float y2; /* coordenadas del 2do punto */
 var float m; /* pendiente de la recta */
 tabla;
-println("Escriba el valor de x1: ");
+print("Escriba el valor de x1: ");
 read(x1);
 print("Escriba el valor de x2: ");
 read(x2);
@@ -802,10 +988,19 @@ tabla;
 println("La pendiente es: ", m);
 println(m);
 print(x1);
-rad={rad};
+"""
+    texto+=f"rad={rad};"
+    texto+="""
 sin(rad);
 cos(rad);
 tan(rad);
+var int i;
+var int x;
+for(i = 0; i < 5; i = i + 1)
+    x = i * 2;
+    print("El valor de x es:");
+    print(x);
+endfor;
 end;
 """
     compilarC(texto)
