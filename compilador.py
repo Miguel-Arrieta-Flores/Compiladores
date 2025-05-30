@@ -16,6 +16,8 @@ class RiscVSimulator:
         # Flag para controlar ejecución
         self.running = False
 
+        self.seguido=False
+
     def load_data_label(self, label, string, base_address=0x10010000):
         """Agrega una etiqueta con .asciiz a la memoria simulada"""
         address = base_address + len(self.data_labels) * 0x20  # espacio reservado por etiqueta
@@ -107,19 +109,19 @@ class RiscVSimulator:
             else:
                 self.registers[rd] = self.registers[rs1] / self.registers[rs2]
 
-        elif opcode == 'fadd':
+        elif opcode == 'fadd.s':
             rd, rs1, rs2 = self._parse_r_type(parts[1:])
             self.registers[rd] = float(self.registers[rs1]) + float(self.registers[rs2])
 
-        elif opcode == 'fsub':
+        elif opcode == 'fsub.s':
             rd, rs1, rs2 = self._parse_r_type(parts[1:])
             self.registers[rd] = float(self.registers[rs1]) - float(self.registers[rs2])
 
-        elif opcode == 'fmul':
+        elif opcode == 'fmul.s':
             rd, rs1, rs2 = self._parse_r_type(parts[1:])
             self.registers[rd] = float(self.registers[rs1]) * float(self.registers[rs2])
 
-        elif opcode == 'fdiv':
+        elif opcode == 'fdiv.s':
             rd, rs1, rs2 = self._parse_r_type(parts[1:])
             if float(self.registers[rs2]) == 0.0:
                 raise ZeroDivisionError("División entre cero en fdiv")
@@ -220,6 +222,16 @@ class RiscVSimulator:
             rs = self._parse_register(parts[2])
             self.registers[rd] = self.registers[rs]
 
+        elif opcode == 'fmv.s':
+            rd = self._parse_register(parts[1])
+            rs = self._parse_register(parts[2])
+            self.registers[rd] = float(self.registers[rs])
+
+        elif opcode == 'fmv.x.w':
+            rd = self._parse_register(parts[1])
+            rs = self._parse_register(parts[2])
+            self.registers[rd] = int(float(self.registers[rs]))
+
         elif opcode == "la":
             # Sintaxis esperada: la xN, label
             rd = self._parse_register(parts[1])
@@ -235,9 +247,15 @@ class RiscVSimulator:
         elif opcode == 'ecall':
             # Si a7 (x17) = 1, imprime el entero en a0 (x10)
             if self.registers[17] == 1:
-                print(f"Output: {self.registers[10]}")
+                if(self.seguido):
+                    print(f"Output: {self.registers[10]}",end="")
+                else:
+                    print(f"Output: {self.registers[10]}")
             elif self.registers[17] == 2:
-                print(f"Output: {self.registers[42]}")
+                if(self.seguido):
+                    print(f"Output: {self.registers[42]}",end="")
+                else:
+                    print(f"Output: {self.registers[42]}")
             
             elif self.registers[17] == 4:
                 # Mostrar los caracteres almacenados en memoria
@@ -246,7 +264,10 @@ class RiscVSimulator:
                 while self.memory[addr] != 0:
                     mensaje.append(chr(self.memory[addr]))
                     addr += 1
-                print(''.join(mensaje))
+                if(self.seguido):
+                    print(''.join(mensaje),end="")
+                else:
+                    print(''.join(mensaje))
             
             elif self.registers[17] == 5:
                 try:
@@ -516,7 +537,6 @@ def obtenerPrioridadOperador(e):
         }
     return prioridades.get(e, 0)
 
-
 def convertirInfijaAPostfija(infija):
 	'''Convierte una expresión infija a una posfija, devolviendo una lista.'''
 	pila = []
@@ -613,7 +633,6 @@ def procesar_for(tokens_for, cuerpo, tabla_var, f, x):
 
     return program, x, f
 
-
 def get_operand(tabla_var, expr, reg_prefix):
     expr = expr.strip().strip(';')  # Elimina espacios y ;
     if existe_var(tabla_var, expr):
@@ -624,7 +643,6 @@ def get_operand(tabla_var, expr, reg_prefix):
         return expr
     else:
         raise ValueError(f"Operando no reconocido o no soportado: {expr}")
-
 
 def quitar_comentarios(program):
     estado = 'Z'
@@ -718,7 +736,6 @@ def separa_tokens(program):
             tokensP.append(tokens)
     return tokensP
 
-
 def correr_programa(tabla_var,tokens,simulator):
     seccion_data={}
     program=""
@@ -726,7 +743,6 @@ def correr_programa(tabla_var,tokens,simulator):
     f=0
     i=0
     while i <= len(tokens)-1:
-        contenido=[]
         if es_id(tokens[i][0]):
             if es_pal_res(tokens[i][0]):
                 if es_tipo(tokens[i][1]):
@@ -766,7 +782,7 @@ def correr_programa(tabla_var,tokens,simulator):
                         elif var_type == 'float':
                             program += "li a7, 6\n" 
                             program += "ecall\n"
-                            program += f"mv {var_reg}, fa0\n" 
+                            program += f"fmv.s {var_reg}, fa0\n" 
                         elif var_type == 'char':
                             program += "li a7, 12\n" 
                             program += "ecall\n"
@@ -786,9 +802,9 @@ def correr_programa(tabla_var,tokens,simulator):
                     
                 # Manejo de print y println
                 elif tokens[i][0] in ['print', 'println']:
+                    contenido=[]
                     if len(tokens[i]) < 3 or tokens[i][1] != '(' or tokens[i][-2] != ')':
                         print("Error de sintaxis en print/println")
-                    
                     for c in range(2,len(tokens[i])-1):
                         if(tokens[i][c]!=',' and tokens[i][c]!=')'):
                             contenido.append(tokens[i][c])
@@ -823,7 +839,7 @@ def correr_programa(tabla_var,tokens,simulator):
                                 program+=("ecall\n") # Ejecutar syscall
                             
                             elif tipo == "float":
-                                program+=(f"mv fa0, {registro}\n")  # Cargar valor de {tokens[i][2]}
+                                program+=(f"fmv.s fa0, {registro}\n")  # Cargar valor de {tokens[i][2]}
                                 program+=("li a7, 2\n")  # Cargar valor de {tokens[i][2]}
                                 program+=("ecall\n") # Ejecutar syscall
                             
@@ -867,6 +883,39 @@ def correr_programa(tabla_var,tokens,simulator):
                             reg = getValor(tabla_var, tokens[i][0])
                             cuerpo_for += f"mul {reg}, {reg1}, {reg2}\n"
 
+                        elif len(tokens[i]) >= 5 and tokens[i][3] == '+':
+                            reg1 = getValor(tabla_var, tokens[i][2])
+                            reg2 = get_operand(tabla_var, tokens[i][4], "+")
+                            if esEntero(tokens[i][4]):
+                                temp = f"x{x}"
+                                cuerpo_for += f"li {temp}, {tokens[i][4]}\n"
+                                x += 1
+                                reg2 = temp
+                            reg = getValor(tabla_var, tokens[i][0])
+                            cuerpo_for += f"add {reg}, {reg1}, {reg2}\n"
+
+                        elif len(tokens[i]) >= 5 and tokens[i][3] == '-':
+                            reg1 = getValor(tabla_var, tokens[i][2])
+                            reg2 = get_operand(tabla_var, tokens[i][4], "-")
+                            if esEntero(tokens[i][4]):
+                                temp = f"x{x}"
+                                cuerpo_for += f"li {temp}, {tokens[i][4]}\n"
+                                x += 1
+                                reg2 = temp
+                            reg = getValor(tabla_var, tokens[i][0])
+                            cuerpo_for += f"sub {reg}, {reg1}, {reg2}\n"
+
+                        elif len(tokens[i]) >= 5 and tokens[i][3] == '/':
+                            reg1 = getValor(tabla_var, tokens[i][2])
+                            reg2 = get_operand(tabla_var, tokens[i][4], "/")
+                            if esEntero(tokens[i][4]):
+                                temp = f"x{x}"
+                                cuerpo_for += f"li {temp}, {tokens[i][4]}\n"
+                                x += 1
+                                reg2 = temp
+                            reg = getValor(tabla_var, tokens[i][0])
+                            cuerpo_for += f"div {reg}, {reg1}, {reg2}\n"
+
                         # Print de variables o cadenas
                         elif tokens[i][0] == 'print' and len(tokens[i]) >= 3:
                             var = tokens[i][2]
@@ -876,7 +925,7 @@ def correr_programa(tabla_var,tokens,simulator):
                                 if tipo == "int":
                                     cuerpo_for += f"mv a0, {registro}\nli a7, 1\necall\n"
                                 elif tipo == "float":
-                                    cuerpo_for += f"mv fa0, {registro}\nli a7, 2\necall\n"
+                                    cuerpo_for += f"fmv.s fa0, {registro}\nli a7, 2\necall\n"
                                 elif tipo == "char":
                                     cuerpo_for += f"mv a0, {registro}\nli a7, 11\necall\n"
                                 elif tipo == "string":
@@ -924,6 +973,8 @@ def correr_programa(tabla_var,tokens,simulator):
                     valores=[]
                     e1=tokens[i][2:-1]
                     valores=analizarPostfija(convertirInfijaAPostfija(e1))
+                    if(len(e1)==3):
+                        valores=tokens[i]
                     for j in range(len(valores)):
                         if (j<len(valores)-1):
                             agrega_var(tabla_var, valores[j][0], tipoResultado(valores[j][2],valores[j][3],valores[j][4])) #Se asigna el nuevo valor
@@ -944,26 +995,38 @@ def correr_programa(tabla_var,tokens,simulator):
                             if(j==len(valores)-1):
                                 registro=str(getValor(tabla_var, tokens[i][0]))
                             if(valores[j][3]=='-'):
-                                program+="sub "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
-                            elif(valores[j][3]=='+'):
-                                program+="add "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
-                            elif(valores[j][3]=='*'):
-                                if(getValor(tabla_var,valores[j][4])!=None):
-                                    program+="mul "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                                if (tipoResultado(valores[j][2],valores[j][3],valores[j][4])=="float"):
+                                    program+="fsub.s "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
                                 else:
-                                    program+="muli "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+valores[j][4]+"\n"
+                                    program+="sub "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                            elif(valores[j][3]=='+'):
+                                if (tipoResultado(valores[j][2],valores[j][3],valores[j][4])=="float"):
+                                    program+="fadd.s "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                                else:
+                                    program+="add "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                            elif(valores[j][3]=='*'):
+                                if (tipoResultado(valores[j][2],valores[j][3],valores[j][4])=="float"):
+                                    program+="fmul.s "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                                else:
+                                    if(getValor(tabla_var,valores[j][4])!=None):
+                                        program+="mul "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                                    else:
+                                        program+="muli "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+valores[j][4]+"\n"
                             elif(valores[j][3]=='/'):
-                                program+="div "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                                if (tipoResultado(valores[j][2],valores[j][3],valores[j][4])=="float"):
+                                    program+="fdiv.s "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
+                                else:
+                                    program+="div "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
                     if(tokens[i][2] in ['sin','cos','tan']):
                         if(tokens[i][2]=='sin'):
                             program+="sin fa0, "+str(getValor(tabla_var,tokens[i][4])+"\n")
-                            program+=("mv "+str(getValor(tabla_var,tokens[i][0]))+", fa0\n")
+                            program+=("fmv.s "+str(getValor(tabla_var,tokens[i][0]))+", fa0\n")
                         elif(tokens[i][2]=='cos'):
                             program+="cos fa0, "+str(getValor(tabla_var,tokens[i][4])+"\n")
-                            program+=("mv "+str(getValor(tabla_var,tokens[i][0]))+", fa0\n")
+                            program+=("fmv.s "+str(getValor(tabla_var,tokens[i][0]))+", fa0\n")
                         elif(tokens[i][2]=='tan'):
                             program+="tan fa0, "+str(getValor(tabla_var,tokens[i][4])+"\n")
-                            program+=("mv "+str(getValor(tabla_var,tokens[i][0]))+", fa0\n")
+                            program+=("fmv.s "+str(getValor(tabla_var,tokens[i][0]))+", fa0\n")
         i += 1                  
     
     codigo_final = ".data\n"
