@@ -60,7 +60,6 @@ class RiscVSimulator:
             # Guardamos la instrucción
             self.instructions[address] = line
             address += 4  # Cada instrucción ocupa 4 bytes en RISC-V
-        print(program)
     
     def run(self):
         """Ejecuta el programa cargado."""
@@ -70,7 +69,6 @@ class RiscVSimulator:
         while self.running and self.pc in self.instructions:
             instruction = self.instructions[self.pc]
             self.execute_instruction(instruction)
-        self.print_state()
         return self.registers[10]  # Devuelve el valor en x10 (a0) como resultado
     
     def execute_instruction(self, instruction):
@@ -108,6 +106,24 @@ class RiscVSimulator:
                 print("Error, No se puede dividir el numero 0")
             else:
                 self.registers[rd] = self.registers[rs1] / self.registers[rs2]
+
+        elif opcode == 'fadd':
+            rd, rs1, rs2 = self._parse_r_type(parts[1:])
+            self.registers[rd] = float(self.registers[rs1]) + float(self.registers[rs2])
+
+        elif opcode == 'fsub':
+            rd, rs1, rs2 = self._parse_r_type(parts[1:])
+            self.registers[rd] = float(self.registers[rs1]) - float(self.registers[rs2])
+
+        elif opcode == 'fmul':
+            rd, rs1, rs2 = self._parse_r_type(parts[1:])
+            self.registers[rd] = float(self.registers[rs1]) * float(self.registers[rs2])
+
+        elif opcode == 'fdiv':
+            rd, rs1, rs2 = self._parse_r_type(parts[1:])
+            if float(self.registers[rs2]) == 0.0:
+                raise ZeroDivisionError("División entre cero en fdiv")
+            self.registers[rd] = float(self.registers[rs1]) / float(self.registers[rs2])
 
         #Intrucciones trigonometricas
         elif opcode == "sin":
@@ -399,6 +415,7 @@ class RiscVSimulator:
                     print(f"f{i-32} ({alias}): {self.registers[i]}")
                 else:
                     print(f"f{i-32}: {self.registers[i]}")
+
 # Compilador C
 
 class Variable:
@@ -540,7 +557,8 @@ def analizarPostfija(postfija):
             pasos.append(t)
             pila.append(resultado)
             temp_var += 1
-
+    print(postfija)
+    print(pasos)
     return pasos
 
 def procesar_for(tokens_for, cuerpo, tabla_var, f, x):
@@ -637,9 +655,11 @@ def separa_tokens(program):
     tokensP=[]
     for line in program.strip().split('\n'):
         line=line.strip()
+        if line=="" or line=="}":
+            line=";"
         if len(program) < 3:
             return []
-        elif line[-1] != ';' and not (line.startswith("for") or line.startswith("endfor")):
+        elif line[-1] != ';' and not (line.startswith("for")):
             print('Error, la siguiente linea no tiene ";": '+line)
             break
         else:    
@@ -706,8 +726,7 @@ def correr_programa(tabla_var,tokens,simulator):
     f=0
     i=0
     while i <= len(tokens)-1:
-        print(tokens[i])
-        print(i)
+        contenido=[]
         if es_id(tokens[i][0]):
             if es_pal_res(tokens[i][0]):
                 if es_tipo(tokens[i][1]):
@@ -769,12 +788,11 @@ def correr_programa(tabla_var,tokens,simulator):
                 elif tokens[i][0] in ['print', 'println']:
                     if len(tokens[i]) < 3 or tokens[i][1] != '(' or tokens[i][-2] != ')':
                         print("Error de sintaxis en print/println")
-                    contenido=[]
+                    
                     for c in range(2,len(tokens[i])-1):
                         if(tokens[i][c]!=',' and tokens[i][c]!=')'):
                             contenido.append(tokens[i][c])
                         c+=1
-                    print(contenido)
                     for j in range(len(contenido)):
                         imprimir=contenido[j]
                         if (tokens[i][-2]==")" and existe_var(tabla_var,imprimir)==False): #Hay un solo token dentro del print
@@ -829,25 +847,23 @@ def correr_programa(tabla_var,tokens,simulator):
                         program+="ecall\n"
 
                 elif tokens[i][0] == 'for':                    
-                    linea = tokens[i]  # Línea donde inicia el for
+                    linea = tokens[i][:-2]  # Línea donde inicia el for
                     cuerpo_for = ""    # Código que irá dentro del for
                     i += 1  # Avanza a la siguiente línea después del 'for'
 
                     # Recorrer todas las líneas hasta encontrar 'endfor'
-                    while i < len(tokens) and tokens[i][0] != 'endfor':
+                    while i < len(tokens) and tokens[i][0] != '}':
                         print("CUERPO FOR:", tokens[i])  # Debug
 
                         # Detectar multiplicación del tipo: ID = ID * valor
                         if len(tokens[i]) >= 5 and tokens[i][3] == '*':
                             reg1 = getValor(tabla_var, tokens[i][2])
                             reg2 = get_operand(tabla_var, tokens[i][4], "x")
-
                             if esEntero(tokens[i][4]):
                                 temp = f"x{x}"
                                 cuerpo_for += f"li {temp}, {tokens[i][4]}\n"
                                 x += 1
                                 reg2 = temp
-
                             reg = getValor(tabla_var, tokens[i][0])
                             cuerpo_for += f"mul {reg}, {reg1}, {reg2}\n"
 
@@ -866,7 +882,7 @@ def correr_programa(tabla_var,tokens,simulator):
                                 elif tipo == "string":
                                     cuerpo_for += f"la a0, {registro}\nli a7, 4\necall\n"
                             else:
-                                # Literal como cadena
+                                # Si no es variable, asumir que es cadena literal
                                 msg = tokens[i][2]
                                 label = f"msg_{i}"
                                 simulator.load_data_label(label, msg)
@@ -903,6 +919,7 @@ def correr_programa(tabla_var,tokens,simulator):
                 if (tokens[i][1]=="="): #Se verifica si tiene el caracter "="
                     program+=f"li {getValor(tabla_var,tokens[i][0])}, {tokens[i][2]}\n"
             elif(len(tokens[i])>=5):
+                print(tokens[i])
                 if (tokens[i][1]=="="): #Se verifica si tiene el caracter "="
                     valores=[]
                     e1=tokens[i][2:-1]
@@ -937,17 +954,27 @@ def correr_programa(tabla_var,tokens,simulator):
                                     program+="muli "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+valores[j][4]+"\n"
                             elif(valores[j][3]=='/'):
                                 program+="div "+str(registro)+", "+str(getValor(tabla_var,valores[j][2]))+", "+str(getValor(tabla_var,valores[j][4])+"\n")
-                    if(tokens[i][3] in ['sin','cos','tan']):
-                        registro=str(getValor(tabla_var, tokens[i][0]))
-                        if(tokens[i][3]=='sin'):
-                            program+="sin "+str(registro)+", "+str(getValor(tabla_var,tokens[i][5]))
+                    if(tokens[i][2] in ['sin','cos','tan']):
+                        if(tokens[i][2]=='sin'):
+                            program+="sin fa0, "+str(getValor(tabla_var,tokens[i][4])+"\n")
+                            program+=("mv "+str(getValor(tabla_var,tokens[i][0]))+", fa0\n")
+                        elif(tokens[i][2]=='cos'):
+                            program+="cos fa0, "+str(getValor(tabla_var,tokens[i][4])+"\n")
+                            program+=("mv "+str(getValor(tabla_var,tokens[i][0]))+", fa0\n")
+                        elif(tokens[i][2]=='tan'):
+                            program+="tan fa0, "+str(getValor(tabla_var,tokens[i][4])+"\n")
+                            program+=("mv "+str(getValor(tabla_var,tokens[i][0]))+", fa0\n")
         i += 1                  
     
     codigo_final = ".data\n"
     for linea in seccion_data:
         codigo_final += linea + "\n"
     codigo_final += "\n.text\n" + program
+    print("-------------CODIGO ENSAMBLADOR---------------")
+    print(codigo_final)
     simulator.load_program(codigo_final)
+    print("-------------TABLA FINAL DE VARIABLES---------------")
+    imprime_tabla_var(tabla_var)
     simulator.run()
 
 # Función para ejecutar un programa
@@ -963,7 +990,7 @@ def compilarC(program_code):
 # Función principal
 if __name__ == "__main__":
     # Este es solo un ejemplo - los programas reales se cargarán desde archivos o entrada del usuario
-    rad=(math.pi/4)
+    rad=(math.pi/3)
     texto = """
 var float rad;
 print("Hola Mundo");
@@ -972,7 +999,6 @@ var float x2; /* coordenadas del 1er punto */
 var float y1;
 var float y2; /* coordenadas del 2do punto */
 var float m; /* pendiente de la recta */
-tabla;
 print("Escriba el valor de x1: ");
 read(x1);
 print("Escriba el valor de x2: ");
@@ -981,13 +1007,8 @@ print("Escriba el valor de y1: ");
 read(y1);
 print("Escriba el valor de y2: ");
 read(y2);
-tabla;
-print(x1);
 m = (y2 - y1) / (x2 - x1);
-tabla;
 println("La pendiente es: ", m);
-println(m);
-print(x1);
 """
     texto+=f"rad={rad};"
     texto+="""
@@ -996,11 +1017,11 @@ cos(rad);
 tan(rad);
 var int i;
 var int x;
-for(i = 0; i < 5; i = i + 1)
+for(i = 0; i < 5; i = i + 1){
     x = i * 2;
     print("El valor de x es:");
     print(x);
-endfor;
+};
 end;
 """
     compilarC(texto)
